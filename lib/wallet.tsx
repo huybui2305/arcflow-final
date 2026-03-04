@@ -4,28 +4,19 @@ import { createContext, useContext, useState, useEffect, useCallback, ReactNode 
 import { ethers } from 'ethers'
 import { ARC_TESTNET, CONTRACTS, ERC20_ABI } from '@/lib/arc'
 
-// ─── Types ────────────────────────────────────────────────────────────────────
-interface Balances {
-  USDC: string   // formatted, 6 decimals via ERC-20 interface
-  EURC: string   // formatted, 6 decimals
-  native: string // formatted, 18 decimals (native USDC balance)
-}
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+declare global { interface Window { ethereum?: any } }
+
+interface Balances { USDC: string; EURC: string; native: string }
 
 interface WalletState {
-  address: string | null
-  shortAddress: string
-  isConnected: boolean
-  isConnecting: boolean
-  balances: Balances
-  provider: ethers.BrowserProvider | null
-  signer: ethers.JsonRpcSigner | null
+  address: string | null; shortAddress: string; isConnected: boolean
+  isConnecting: boolean; balances: Balances
+  provider: ethers.BrowserProvider | null; signer: ethers.JsonRpcSigner | null
   error: string | null
-  connect: () => Promise<void>
-  disconnect: () => void
-  refreshBalances: () => Promise<void>
+  connect: () => Promise<void>; disconnect: () => void; refreshBalances: () => Promise<void>
 }
 
-// ─── Context ──────────────────────────────────────────────────────────────────
 const WalletCtx = createContext<WalletState | null>(null)
 
 export function useWallet() {
@@ -34,7 +25,6 @@ export function useWallet() {
   return ctx
 }
 
-// ─── Provider ─────────────────────────────────────────────────────────────────
 export function WalletProvider({ children }: { children: ReactNode }) {
   const [address, setAddress] = useState<string | null>(null)
   const [provider, setProvider] = useState<ethers.BrowserProvider | null>(null)
@@ -45,83 +35,51 @@ export function WalletProvider({ children }: { children: ReactNode }) {
 
   const shortAddress = address ? address.slice(0, 6) + '...' + address.slice(-4) : ''
 
-  // Fetch all balances for a given address using a read-only provider
   const refreshBalances = useCallback(async (addr?: string) => {
     const target = addr || address
     if (!target) return
     try {
       const rpc = new ethers.JsonRpcProvider(ARC_TESTNET.rpc)
-
-      // Native USDC balance (18 decimals)
       const native = await rpc.getBalance(target)
-      const nativeFmt = parseFloat(ethers.formatUnits(native, 18)).toFixed(4)
-
-      // USDC via ERC-20 (6 decimals) — the recommended interface
       const usdc = new ethers.Contract(CONTRACTS.USDC, ERC20_ABI, rpc)
-      const usdcBal = await usdc.balanceOf(target)
-      const usdcFmt = parseFloat(ethers.formatUnits(usdcBal, 6)).toFixed(4)
-
-      // EURC (6 decimals)
       const eurc = new ethers.Contract(CONTRACTS.EURC, ERC20_ABI, rpc)
-      const eurcBal = await eurc.balanceOf(target)
-      const eurcFmt = parseFloat(ethers.formatUnits(eurcBal, 6)).toFixed(4)
-
-      setBalances({ USDC: usdcFmt, EURC: eurcFmt, native: nativeFmt })
-    } catch (e) {
-      console.error('Balance fetch error:', e)
-    }
+      const [usdcBal, eurcBal] = await Promise.all([usdc.balanceOf(target), eurc.balanceOf(target)])
+      setBalances({
+        native: parseFloat(ethers.formatUnits(native, 18)).toFixed(4),
+        USDC: parseFloat(ethers.formatUnits(usdcBal, 6)).toFixed(4),
+        EURC: parseFloat(ethers.formatUnits(eurcBal, 6)).toFixed(4),
+      })
+    } catch (e) { console.error('Balance error:', e) }
   }, [address])
 
-  // Add Arc Testnet to MetaMask if not present
   async function ensureArcNetwork() {
     try {
-      await window.ethereum.request({
-        method: 'wallet_switchEthereumChain',
-        params: [{ chainId: ARC_TESTNET.chainIdHex }],
-      })
-    } catch (switchErr: any) {
-      if (switchErr.code === 4902) {
+      await window.ethereum.request({ method: 'wallet_switchEthereumChain', params: [{ chainId: ARC_TESTNET.chainIdHex }] })
+    } catch (e: unknown) {
+      if ((e as { code?: number }).code === 4902) {
         await window.ethereum.request({
           method: 'wallet_addEthereumChain',
-          params: [{
-            chainId: ARC_TESTNET.chainIdHex,
-            chainName: ARC_TESTNET.name,
-            nativeCurrency: ARC_TESTNET.nativeCurrency,
-            rpcUrls: [ARC_TESTNET.rpc],
-            blockExplorerUrls: [ARC_TESTNET.explorer],
-          }],
+          params: [{ chainId: ARC_TESTNET.chainIdHex, chainName: ARC_TESTNET.name, nativeCurrency: ARC_TESTNET.nativeCurrency, rpcUrls: [ARC_TESTNET.rpc], blockExplorerUrls: [ARC_TESTNET.explorer] }],
         })
-      } else throw switchErr
+      } else throw e
     }
   }
 
   const connect = useCallback(async () => {
-    if (!window.ethereum) {
-      setError('No wallet found. Install MetaMask or Coinbase Wallet.')
-      return
-    }
-    setIsConnecting(true)
-    setError(null)
+    if (typeof window === 'undefined' || !window.ethereum) { setError('No wallet found. Install MetaMask.'); return }
+    setIsConnecting(true); setError(null)
     try {
       const accounts: string[] = await window.ethereum.request({ method: 'eth_requestAccounts' })
-      if (!accounts[0]) throw new Error('No account returned')
-
+      if (!accounts[0]) throw new Error('No account')
       await ensureArcNetwork()
-
       const _provider = new ethers.BrowserProvider(window.ethereum)
       const _signer = await _provider.getSigner()
-      const _address = accounts[0]
-
-      setProvider(_provider)
-      setSigner(_signer)
-      setAddress(_address)
-      await refreshBalances(_address)
-    } catch (e: any) {
-      if (e.code === 4001) setError('Connection rejected.')
-      else setError(e.message || 'Connection failed')
-    } finally {
-      setIsConnecting(false)
-    }
+      setProvider(_provider); setSigner(_signer); setAddress(accounts[0])
+      await refreshBalances(accounts[0])
+    } catch (e: unknown) {
+      const err = e as { code?: number; message?: string }
+      setError(err.code === 4001 ? 'Rejected.' : err.message || 'Failed')
+    } finally { setIsConnecting(false) }
   }, [refreshBalances])
 
   const disconnect = useCallback(() => {
@@ -129,27 +87,20 @@ export function WalletProvider({ children }: { children: ReactNode }) {
     setBalances({ USDC: '0', EURC: '0', native: '0' })
   }, [])
 
-  // Listen for wallet events
   useEffect(() => {
-    if (!window.ethereum) return
-    const onAccountsChanged = async (accs: string[]) => {
+    if (typeof window === 'undefined' || !window.ethereum) return
+    const onAccounts = async (accs: string[]) => {
       if (!accs[0]) { disconnect(); return }
       setAddress(accs[0])
-      const _provider = new ethers.BrowserProvider(window.ethereum)
-      const _signer = await _provider.getSigner()
-      setProvider(_provider); setSigner(_signer)
+      const p = new ethers.BrowserProvider(window.ethereum)
+      setProvider(p); setSigner(await p.getSigner())
       await refreshBalances(accs[0])
     }
-    const onChainChanged = () => window.location.reload()
-    window.ethereum.on('accountsChanged', onAccountsChanged)
-    window.ethereum.on('chainChanged', onChainChanged)
-    return () => {
-      window.ethereum.removeListener('accountsChanged', onAccountsChanged)
-      window.ethereum.removeListener('chainChanged', onChainChanged)
-    }
+    window.ethereum.on('accountsChanged', onAccounts)
+    window.ethereum.on('chainChanged', () => window.location.reload())
+    return () => { window.ethereum?.removeListener('accountsChanged', onAccounts) }
   }, [disconnect, refreshBalances])
 
-  // Auto-refresh balances every 10s when connected
   useEffect(() => {
     if (!address) return
     const id = setInterval(() => refreshBalances(), 10_000)
@@ -157,11 +108,7 @@ export function WalletProvider({ children }: { children: ReactNode }) {
   }, [address, refreshBalances])
 
   return (
-    <WalletCtx.Provider value={{
-      address, shortAddress, isConnected: !!address,
-      isConnecting, balances, provider, signer, error,
-      connect, disconnect, refreshBalances,
-    }}>
+    <WalletCtx.Provider value={{ address, shortAddress, isConnected: !!address, isConnecting, balances, provider, signer, error, connect, disconnect, refreshBalances }}>
       {children}
     </WalletCtx.Provider>
   )
