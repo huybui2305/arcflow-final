@@ -1,48 +1,83 @@
 'use client'
 
-import { DollarSign, Zap, Globe, Shield, TrendingUp } from 'lucide-react'
+import { TrendingUp, RefreshCw } from 'lucide-react'
+import { useNetworkVolume, useNetworkStats } from '@/lib/hooks'
 
-const STATS = [
-  { icon: '💵', val: '$4.2B',   label: 'Settled Today',    badge: '+12.4%', up: true },
-  { icon: '⚡', val: '0.8s',    label: 'Avg Finality',     badge: '-0.1s',  up: true },
-  { icon: '🌐', val: '148',     label: 'Active Corridors', badge: '+6 new', up: true },
-  { icon: '🛡', val: '$0.001',  label: 'Gas (USDC)',       badge: 'Fixed',  up: false },
-]
-
+// Static chart shape — replaced with live accumulator in a full prod build
 const CHART = [
-  { h:'00',v:42},{ h:'02',v:28},{ h:'04',v:18},{ h:'06',v:35},{ h:'08',v:68},
-  { h:'10',v:82},{ h:'12',v:95},{ h:'14',v:88},{ h:'16',v:74},{ h:'18',v:91},
-  { h:'20',v:78},{ h:'22',v:62},
+  { h: '00', v: 42 }, { h: '02', v: 28 }, { h: '04', v: 18 }, { h: '06', v: 35 }, { h: '08', v: 68 },
+  { h: '10', v: 82 }, { h: '12', v: 95 }, { h: '14', v: 88 }, { h: '16', v: 74 }, { h: '18', v: 91 },
+  { h: '20', v: 78 }, { h: '22', v: 62 },
 ]
 const maxV = Math.max(...CHART.map(d => d.v))
 
-const CORRIDORS = [
-  { name:'US → EU',   vol:'$1.2B', share:78, trend:'+8%',  c:'linear-gradient(90deg,#00e5ff,#00b4d8)'},
-  { name:'APAC → ME', vol:'$840M', share:54, trend:'+22%', c:'rgba(0,229,255,.55)'},
-  { name:'LATAM → US',vol:'$620M', share:40, trend:'+15%', c:'rgba(0,229,255,.4)'},
-  { name:'EU → APAC', vol:'$490M', share:31, trend:'+5%',  c:'rgba(0,229,255,.28)'},
-]
-
 export default function StatsAndAnalytics() {
+  const vol = useNetworkVolume()
+  const { blockNumber } = useNetworkStats()
+
+  const STATS = [
+    {
+      icon: '💵',
+      val: vol.loading ? '…' : `$${vol.totalVolume}`,
+      label: 'USDC Settled',
+      sub: 'last 200 blocks · live',
+      up: true,
+    },
+    {
+      icon: '⚡',
+      val: '~0.8s',
+      label: 'Avg Finality',
+      sub: 'Malachite BFT',
+      up: true,
+    },
+    {
+      icon: '🔁',
+      val: vol.loading ? '…' : vol.txCount.toLocaleString(),
+      label: 'Transfers',
+      sub: 'last 200 blocks · live',
+      up: true,
+    },
+    {
+      icon: '🛡',
+      val: '$0.001',
+      label: 'Gas (USDC)',
+      sub: 'Fixed fee',
+      up: false,
+    },
+  ]
+
   return (
     <>
       {/* Stats */}
       <section id="stats" style={{ padding: '60px 0 0' }}>
         <div className="max-w-6xl mx-auto px-6">
+          {/* Section label */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 20 }}>
+            <div className="eyebrow-line" />
+            <span className="eyebrow-text">Live Network Stats</span>
+            {vol.loading ? (
+              <RefreshCw size={10} className="anim-spin" style={{ color: 'var(--cyan)', marginLeft: 4 }} />
+            ) : (
+              <span style={{ fontSize: 9, fontFamily: 'var(--font-mono)', color: 'var(--green)', marginLeft: 4 }}>
+                ● LIVE · Block #{blockNumber?.toLocaleString() ?? '…'}
+              </span>
+            )}
+          </div>
+
           <div className="three-col" style={{ display: 'grid', gridTemplateColumns: 'repeat(4,1fr)', gap: 12 }}>
             {STATS.map(s => (
               <div key={s.label} className="gcard" style={{ padding: 22, cursor: 'default' }}>
                 <div style={{ fontSize: 22, marginBottom: 14 }}>{s.icon}</div>
-                <div className="font-display" style={{ fontSize: 26, fontWeight: 900, color: 'var(--text)', letterSpacing: '-.03em', marginBottom: 4 }}>
+                <div className="font-display" style={{ fontSize: 26, fontWeight: 900, color: s.up ? 'var(--cyan)' : 'var(--text)', letterSpacing: '-.03em', marginBottom: 4 }}>
                   {s.val}
                 </div>
-                <div style={{ fontSize: 12, color: 'var(--muted)', marginBottom: 8 }}>{s.label}</div>
+                <div style={{ fontSize: 12, color: 'var(--muted)', marginBottom: 6 }}>{s.label}</div>
                 <span className="font-mono" style={{
-                  fontSize: 10, padding: '2px 8px', borderRadius: 20,
-                  background: s.up ? 'rgba(0,255,148,.08)' : 'rgba(0,229,255,.08)',
-                  color: s.up ? 'var(--green)' : 'var(--cyan)',
+                  fontSize: 9.5, padding: '2px 8px', borderRadius: 20,
+                  background: s.up ? 'rgba(0,229,255,.08)' : 'rgba(0,255,148,.08)',
+                  color: s.up ? 'var(--cyan)' : 'var(--green)',
                 }}>
-                  {s.badge}
+                  {s.sub}
                 </span>
               </div>
             ))}
@@ -63,12 +98,17 @@ export default function StatsAndAnalytics() {
             <div className="gcard" style={{ padding: 24 }}>
               <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: 20 }}>
                 <div>
-                  <div className="font-display" style={{ fontWeight: 700, fontSize: 14, color: 'var(--text)' }}>Settlement Volume (24h)</div>
-                  <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 2 }}>USDC · Arc Testnet</div>
+                  <div className="font-display" style={{ fontWeight: 700, fontSize: 14, color: 'var(--text)' }}>Settlement Volume (session)</div>
+                  <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 2 }}>
+                    USDC · Arc Testnet ·{' '}
+                    <span style={{ color: 'var(--cyan)' }}>
+                      {vol.loading ? 'loading…' : `$${vol.totalVolume} in ${vol.blockWindow} blocks`}
+                    </span>
+                  </div>
                 </div>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 4, fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--green)' }}>
                   <TrendingUp size={12} />
-                  +18.4% vs yesterday
+                  Arc Testnet Live
                 </div>
               </div>
               <div style={{ display: 'flex', alignItems: 'flex-end', gap: 3, height: 110 }}>
@@ -90,23 +130,26 @@ export default function StatsAndAnalytics() {
               </div>
             </div>
 
-            {/* Corridors */}
+            {/* Live stats summary */}
             <div className="gcard" style={{ padding: 22 }}>
-              <div className="font-display" style={{ fontWeight: 700, fontSize: 14, color: 'var(--text)', marginBottom: 20 }}>Top Corridors</div>
-              {CORRIDORS.map(c => (
-                <div key={c.name} style={{ marginBottom: 16 }}>
-                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 5 }}>
-                    <span style={{ fontSize: 12.5, color: 'var(--sub)' }}>{c.name}</span>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                      <span className="font-mono" style={{ fontSize: 10.5, color: 'var(--muted)' }}>{c.vol}</span>
-                      <span className="font-mono" style={{ fontSize: 10, color: 'var(--green)' }}>{c.trend}</span>
-                    </div>
-                  </div>
-                  <div style={{ height: 5, borderRadius: 3, background: 'rgba(20,36,58,.9)' }}>
-                    <div style={{ height: '100%', borderRadius: 3, background: c.c, width: `${c.share}%`, transition: 'width 1.2s ease' }} />
-                  </div>
+              <div className="font-display" style={{ fontWeight: 700, fontSize: 14, color: 'var(--text)', marginBottom: 20 }}>
+                Chain Stats
+              </div>
+              {[
+                { label: 'USDC Volume (200 blks)', val: vol.loading ? '…' : `$${vol.totalVolume}`, color: 'var(--cyan)' },
+                { label: 'Transfers (200 blks)', val: vol.loading ? '…' : vol.txCount.toLocaleString(), color: 'var(--green)' },
+                { label: 'Avg Gas Fee', val: '$0.001 USDC', color: 'var(--text)' },
+                { label: 'Avg Finality', val: '~0.8s', color: 'var(--green)' },
+                { label: 'Latest Block', val: blockNumber ? `#${blockNumber.toLocaleString()}` : '…', color: 'var(--cyan)' },
+              ].map(r => (
+                <div key={r.label} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14 }}>
+                  <span style={{ fontSize: 12.5, color: 'var(--sub)' }}>{r.label}</span>
+                  <span className="font-mono" style={{ fontSize: 12, color: r.color, fontWeight: 600 }}>{r.val}</span>
                 </div>
               ))}
+              <div style={{ marginTop: 8, paddingTop: 14, borderTop: '1px solid rgba(20,36,58,.9)', fontSize: 10, color: '#2a3a50', fontFamily: 'var(--font-mono)' }}>
+                Data from Arc Testnet RPC · refreshes every 30s
+              </div>
             </div>
           </div>
         </div>

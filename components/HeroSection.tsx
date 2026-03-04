@@ -1,36 +1,17 @@
 'use client'
 
 import { useEffect, useState } from 'react'
-import { Send, BarChart3, ArrowRight } from 'lucide-react'
-import { useLiveFeed } from '@/lib/hooks'
+import { Send, BarChart3, ArrowRight, ExternalLink } from 'lucide-react'
+import { useLiveFeed, useNetworkVolume } from '@/lib/hooks'
 import { useWallet } from '@/lib/wallet'
 import ConnectModal from './ConnectModal'
-
-function counter(from: number, to: number, ms: number, setter: (v: number) => void) {
-  const steps = 60, step = ms / steps
-  let i = 0
-  const t = setInterval(() => {
-    i++
-    const ease = 1 - Math.pow(1 - i / steps, 3)
-    setter(Math.floor(from + (to - from) * ease))
-    if (i >= steps) clearInterval(t)
-  }, step)
-}
+import { ARC_TESTNET } from '@/lib/arc'
 
 export default function HeroSection() {
   const { feed, blockNumber } = useLiveFeed()
+  const { totalVolume, txCount, loading: volLoading } = useNetworkVolume()
   const { isConnected } = useWallet()
   const [showModal, setShowModal] = useState(false)
-  const [vol, setVol] = useState(0)
-  const [txs, setTxs] = useState(0)
-
-  useEffect(() => {
-    const t = setTimeout(() => {
-      counter(0, 4200, 2200, setVol)
-      counter(0, 284729, 2200, setTxs)
-    }, 400)
-    return () => clearTimeout(t)
-  }, [])
 
   return (
     <>
@@ -58,7 +39,7 @@ export default function HeroSection() {
 
               <p style={{ fontSize: 15.5, lineHeight: 1.78, color: 'var(--sub)', maxWidth: 440, marginBottom: 30 }}>
                 The first payment app built natively on Arc — Circle's Economic OS for the internet.
-                Send USDC across 148+ corridors with deterministic finality and fixed $0.001 fees.
+                Send USDC across corridors with deterministic finality and fixed $0.001 fees.
               </p>
 
               <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', marginBottom: 44 }}>
@@ -74,16 +55,28 @@ export default function HeroSection() {
                 </a>
               </div>
 
-              {/* Live numbers */}
+              {/* Live on-chain stats */}
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr 1fr', gap: 16 }}>
                 {[
-                  { num: `$${(vol / 1000).toFixed(1)}B`, label: 'Settled today' },
-                  { num: txs.toLocaleString(), label: 'Transactions' },
-                  { num: '$0.001', label: 'Fixed gas' },
-                  { num: '148+', label: 'Corridors' },
+                  {
+                    num: volLoading ? '…' : `$${totalVolume}`,
+                    label: 'Testnet vol (200 blks)',
+                    live: true,
+                  },
+                  {
+                    num: volLoading ? '…' : txCount.toLocaleString(),
+                    label: 'On-chain txs',
+                    live: true,
+                  },
+                  { num: '$0.001', label: 'Fixed gas fee', live: false },
+                  {
+                    num: blockNumber ? `#${blockNumber.toLocaleString()}` : '…',
+                    label: 'Latest block',
+                    live: true,
+                  },
                 ].map(s => (
                   <div key={s.label}>
-                    <div className="font-display" style={{ fontSize: 'clamp(20px,2.5vw,32px)', fontWeight: 900, color: '#fff', letterSpacing: '-.04em', lineHeight: 1 }}>
+                    <div className="font-display" style={{ fontSize: 'clamp(14px,2vw,26px)', fontWeight: 900, color: s.live ? 'var(--cyan)' : '#fff', letterSpacing: '-.04em', lineHeight: 1 }}>
                       {s.num}
                     </div>
                     <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 3 }}>{s.label}</div>
@@ -92,7 +85,7 @@ export default function HeroSection() {
               </div>
             </div>
 
-            {/* Right: Live TX feed */}
+            {/* Right: Real-time TX feed */}
             <div className="anim-fade" style={{ animationDelay: '.3s', opacity: 0 }}>
               <div style={{
                 borderRadius: 20, padding: 1.5,
@@ -113,38 +106,61 @@ export default function HeroSection() {
 
                   {/* TX rows */}
                   <div>
-                    {feed.map((tx, i) => (
-                      <div
-                        key={tx.id}
-                        className="anim-flowin"
-                        style={{
-                          display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-                          padding: '10px 13px', borderRadius: 10,
-                          background: i === 0 ? 'rgba(0,229,255,.05)' : 'rgba(20,36,58,.4)',
-                          marginBottom: 5, cursor: 'pointer',
-                          transition: 'background .2s',
-                          border: i === 0 ? '1px solid rgba(0,229,255,.1)' : '1px solid transparent',
-                        }}
-                        onMouseEnter={e => (e.currentTarget.style.background = 'rgba(20,36,58,.7)')}
-                        onMouseLeave={e => (e.currentTarget.style.background = i === 0 ? 'rgba(0,229,255,.05)' : 'rgba(20,36,58,.4)')}
-                      >
-                        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                          <div style={{ display: 'flex', alignItems: 'center', gap: 3, fontSize: 15 }}>
-                            <span>{tx.flagFrom}</span>
-                            <ArrowRight size={9} color="var(--muted)" />
-                            <span>{tx.flagTo}</span>
-                          </div>
-                          <div>
-                            <div className="font-mono" style={{ fontSize: 10, color: 'var(--sub)' }}>{tx.id}</div>
-                            <div style={{ fontSize: 10.5, color: '#3d5269', marginTop: 1 }}>{tx.from} → {tx.to}</div>
-                          </div>
-                        </div>
-                        <div style={{ textAlign: 'right' }}>
-                          <div className="font-display" style={{ fontWeight: 700, fontSize: 13, color: 'var(--text)' }}>${tx.amount}</div>
-                          <div className="font-mono" style={{ fontSize: 10, color: 'var(--green)', marginTop: 1 }}>{tx.age}</div>
-                        </div>
+                    {feed.length === 0 ? (
+                      <div style={{ textAlign: 'center', padding: '28px 0', color: 'var(--muted)', fontSize: 12 }}>
+                        <div className="anim-pulse" style={{ width: 8, height: 8, borderRadius: '50%', background: 'var(--cyan)', display: 'inline-block', marginBottom: 10 }} />
+                        <div>Listening for on-chain transfers…</div>
+                        <div style={{ fontSize: 10, marginTop: 4, color: '#2a3a50' }}>Arc Testnet · ~0.8s blocks</div>
                       </div>
-                    ))}
+                    ) : (
+                      feed.map((tx, i) => (
+                        <div
+                          key={tx.hash}
+                          className="anim-flowin"
+                          onClick={() => window.open(`${ARC_TESTNET.explorer}/tx/${tx.hash}`, '_blank')}
+                          style={{
+                            display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                            padding: '10px 13px', borderRadius: 10,
+                            background: i === 0 ? 'rgba(0,229,255,.05)' : 'rgba(20,36,58,.4)',
+                            marginBottom: 5, cursor: 'pointer',
+                            transition: 'background .2s',
+                            border: i === 0 ? '1px solid rgba(0,229,255,.1)' : '1px solid transparent',
+                          }}
+                          onMouseEnter={e => (e.currentTarget.style.background = 'rgba(20,36,58,.7)')}
+                          onMouseLeave={e => (e.currentTarget.style.background = i === 0 ? 'rgba(0,229,255,.05)' : 'rgba(20,36,58,.4)')}
+                        >
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                            <div style={{
+                              width: 30, height: 30, borderRadius: '50%',
+                              background: 'rgba(0,229,255,.1)',
+                              display: 'flex', alignItems: 'center', justifyContent: 'center',
+                              fontSize: 12, color: 'var(--cyan)', fontWeight: 700,
+                            }}>
+                              ↗
+                            </div>
+                            <div>
+                              <div className="font-mono" style={{ fontSize: 10.5, color: 'var(--sub)' }}>
+                                {tx.from} <ArrowRight size={8} style={{ display: 'inline', verticalAlign: 'middle' }} /> {tx.to}
+                              </div>
+                              <div style={{ display: 'flex', alignItems: 'center', gap: 5, marginTop: 2 }}>
+                                <code style={{ fontSize: 9.5, color: '#3d5269' }}>
+                                  {tx.hash.slice(0, 10)}…{tx.hash.slice(-6)}
+                                </code>
+                                <ExternalLink size={8} color="#3d5269" />
+                              </div>
+                            </div>
+                          </div>
+                          <div style={{ textAlign: 'right' }}>
+                            <div className="font-display" style={{ fontWeight: 700, fontSize: 13, color: 'var(--text)' }}>
+                              ${tx.amount}
+                            </div>
+                            <div className="font-mono" style={{ fontSize: 10, color: 'var(--green)', marginTop: 1 }}>
+                              {tx.ageSeconds === 0 ? 'just now' : `${tx.ageSeconds}s ago`}
+                            </div>
+                          </div>
+                        </div>
+                      ))
+                    )}
                   </div>
 
                   {/* Footer */}

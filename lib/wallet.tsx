@@ -55,13 +55,27 @@ export function WalletProvider({ children }: { children: ReactNode }) {
   async function ensureArcNetwork() {
     try {
       await window.ethereum.request({ method: 'wallet_switchEthereumChain', params: [{ chainId: ARC_TESTNET.chainIdHex }] })
-    } catch (e: unknown) {
-      if ((e as { code?: number }).code === 4902) {
-        await window.ethereum.request({
-          method: 'wallet_addEthereumChain',
-          params: [{ chainId: ARC_TESTNET.chainIdHex, chainName: ARC_TESTNET.name, nativeCurrency: ARC_TESTNET.nativeCurrency, rpcUrls: [ARC_TESTNET.rpc], blockExplorerUrls: [ARC_TESTNET.explorer] }],
-        })
-      } else throw e
+    } catch (switchErr: unknown) {
+      const switchCode = (switchErr as { code?: number }).code
+      // 4902 = chain not added yet → try to add it
+      if (switchCode === 4902) {
+        try {
+          await window.ethereum.request({
+            method: 'wallet_addEthereumChain',
+            params: [{ chainId: ARC_TESTNET.chainIdHex, chainName: ARC_TESTNET.name, nativeCurrency: ARC_TESTNET.nativeCurrency, rpcUrls: [ARC_TESTNET.rpc], blockExplorerUrls: [ARC_TESTNET.explorer] }],
+          })
+        } catch (addErr: unknown) {
+          const addCode = (addErr as { code?: number }).code
+          // 4001 = user rejected → rethrow
+          // Everything else (e.g. "same RPC endpoint already exists") → ignore, network is already there
+          if (addCode === 4001) throw addErr
+          // Network already present under a different name/config — that's fine, proceed
+        }
+      } else if (switchCode === 4001) {
+        // User explicitly rejected the switch → rethrow so connect() shows an error
+        throw switchErr
+      }
+      // Any other switch error (e.g. internal MetaMask error) → ignore and proceed
     }
   }
 

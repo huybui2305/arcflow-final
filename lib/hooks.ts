@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import { ethers } from 'ethers'
 import { ARC_TESTNET, CONTRACTS, ERC20_ABI } from '@/lib/arc'
 
@@ -10,7 +10,7 @@ const rpc = new ethers.JsonRpcProvider(ARC_TESTNET.rpc)
 export function useNetworkStats() {
   const [blockNumber, setBlockNumber] = useState<number | null>(null)
   const [status, setStatus] = useState<'connecting' | 'online' | 'error'>('connecting')
-  const [gasPrice, setGasPrice] = useState<string>('0.001')
+  const [gasPrice] = useState<string>('0.001')
 
   const fetchBlock = useCallback(async () => {
     try {
@@ -36,7 +36,7 @@ export interface TxRecord {
   hash: string
   from: string
   to: string | null
-  value: string       // formatted USDC
+  value: string
   blockNumber: number
   timestamp?: number
   type: 'sent' | 'received' | 'contract'
@@ -52,11 +52,7 @@ export function useTxHistory(address: string | null) {
     setLoading(true)
     try {
       const latest = await rpc.getBlockNumber()
-      // Scan last 200 blocks (fast on Arc with ~0.8s blocks)
-      const fromBlock = Math.max(0, latest - 200)
-      const found: TxRecord[] = []
-
-      // Also query ERC-20 Transfer events for USDC
+      const fromBlock = Math.max(0, latest - 300)
       const usdcContract = new ethers.Contract(CONTRACTS.USDC, ERC20_ABI, rpc)
       const sentFilter = usdcContract.filters.Transfer(address, null)
       const recvFilter = usdcContract.filters.Transfer(null, address)
@@ -68,6 +64,7 @@ export function useTxHistory(address: string | null) {
 
       const allLogs = [...sentLogs, ...recvLogs]
       const seenHashes = new Set<string>()
+      const found: TxRecord[] = []
 
       for (const log of allLogs) {
         if (seenHashes.has(log.transactionHash)) continue
@@ -85,7 +82,6 @@ export function useTxHistory(address: string | null) {
         })
       }
 
-      // Sort newest first
       found.sort((a, b) => b.blockNumber - a.blockNumber)
       setTxs(found.slice(0, 20))
     } catch (e) {
@@ -97,80 +93,185 @@ export function useTxHistory(address: string | null) {
 
   useEffect(() => { refresh() }, [refresh])
 
-  // Auto-refresh every 15s
+  // Poll every 5s (reliable with HTTP RPC — avoids ethers event polling silently stopping)
   useEffect(() => {
     if (!address) return
-    const id = setInterval(refresh, 15_000)
+    const id = setInterval(refresh, 5_000)
     return () => clearInterval(id)
   }, [address, refresh])
 
   return { txs, loading, refresh }
 }
 
-// ─── useLiveFeed — mock live tx feed with real block context ─────────────────
-interface FeedTx {
-  id: string
+// ─── useNetworkVolume — real USDC volume from recent blocks ──────────────────
+export interface NetworkVolume {
+  totalVolume: string   // formatted USDC, e.g. "12345.67"
+  txCount: number
+  blockWindow: number
+  loading: boolean
+}
+
+export function useNetworkVolume() {
+  const [data, setData] = useState<NetworkVolume>({ totalVolume: '0', txCount: 0, blockWindow: 0, loading: true })
+
+  const fetch = useCallback(async () => {
+    try {
+      const latest = await rpc.getBlockNumber()
+      const WINDOW = 200
+      const fromBlock = Math.max(0, latest - WINDOW)
+
+      const usdcContract = new ethers.Contract(CONTRACTS.USDC, ERC20_ABI, rpc)
+      const allFilter = usdcContract.filters.Transfer()
+      const logs = await usdcContract.queryFilter(allFilter, fromBlock, latest).catch(() => [])
+
+      let total = BigInt(0)
+      const seenHashes = new Set<string>()
+
+      for (const log of logs) {
+        if (seenHashes.has(log.transactionHash)) continue
+        seenHashes.add(log.transactionHash)
+        const parsed = usdcContract.interface.parseLog({ topics: [...log.topics], data: log.data })
+        if (!parsed) continue
+        total += BigInt(parsed.args[2].toString())
+      }
+
+      const volumeFormatted = parseFloat(ethers.formatUnits(total, 6)).toLocaleString('en-US', {
+        minimumFractionDigits: 2,
+        maximumFractionDigits: 2,
+      })
+
+      setData({
+        totalVolume: volumeFormatted,
+        txCount: seenHashes.size,
+        blockWindow: WINDOW,
+        loading: false,
+      })
+    } catch (e) {
+      console.error('volume fetch error:', e)
+      setData(prev => ({ ...prev, loading: false }))
+    }
+  }, [])
+
+  useEffect(() => {
+    fetch()
+    const id = setInterval(fetch, 30_000)
+    return () => clearInterval(id)
+  }, [fetch])
+
+  return data
+}
+
+// ─── useLiveFeed — real Transfer events from Arc Testnet per block ─────────────
+export interface FeedTx {
+  hash: string
   from: string
   to: string
-  amount: string
-  flagFrom: string
-  flagTo: string
-  age: string
+  amount: string      // formatted USDC
   blockNumber: number
+  ageSeconds: number  // seconds since block was seen
+  token: string
 }
 
-const CORRIDORS = [
-  { from: 'Singapore', to: 'Dubai', ff: '🇸🇬', ft: '🇦🇪', min: 10000, max: 500000 },
-  { from: 'New York', to: 'London', ff: '🇺🇸', ft: '🇬🇧', min: 20000, max: 400000 },
-  { from: 'Tokyo', to: 'Seoul', ff: '🇯🇵', ft: '🇰🇷', min: 1000, max: 50000 },
-  { from: 'Frankfurt', to: 'Mumbai', ff: '🇩🇪', ft: '🇮🇳', min: 5000, max: 200000 },
-  { from: 'São Paulo', to: 'Miami', ff: '🇧🇷', ft: '🇺🇸', min: 3000, max: 80000 },
-  { from: 'Sydney', to: 'Hong Kong', ff: '🇦🇺', ft: '🇭🇰', min: 50000, max: 800000 },
-  { from: 'Zürich', to: 'Singapore', ff: '🇨🇭', ft: '🇸🇬', min: 100000, max: 1000000 },
-  { from: 'Seoul', to: 'Frankfurt', ff: '🇰🇷', ft: '🇩🇪', min: 8000, max: 150000 },
-]
-
-function randAmount(min: number, max: number) {
-  return (Math.floor(Math.random() * (max - min) / 100) * 100 + min).toLocaleString()
+function shortAddr(addr: string) {
+  return `${addr.slice(0, 6)}…${addr.slice(-4)}`
 }
-
-let txCounter = 8821
 
 export function useLiveFeed() {
   const [feed, setFeed] = useState<FeedTx[]>([])
   const [blockNumber, setBlockNumber] = useState<number>(0)
+  const seenHashes = useRef(new Set<string>())
+  const blockTimes = useRef<Map<number, number>>(new Map())
 
-  useEffect(() => {
-    // Seed initial feed
-    const initial = CORRIDORS.slice(0, 5).map((c, i) => ({
-      id: `TX-${txCounter - i}`,
-      from: c.from, to: c.to,
-      amount: randAmount(c.min, c.max),
-      flagFrom: c.ff, flagTo: c.ft,
-      age: i === 0 ? '2s ago' : `${i * 8 + 2}s ago`,
-      blockNumber: 0,
-    }))
-    setFeed(initial)
+  const fetchBlockEvents = useCallback(async (blockNum: number) => {
+    try {
+      blockTimes.current.set(blockNum, Date.now())
+      // Trim old entries
+      if (blockTimes.current.size > 100) {
+        const oldest = Math.min(...Array.from(blockTimes.current.keys()))
+        blockTimes.current.delete(oldest)
+      }
+
+      const usdcContract = new ethers.Contract(CONTRACTS.USDC, ERC20_ABI, rpc)
+      const allFilter = usdcContract.filters.Transfer()
+      const logs = await usdcContract.queryFilter(allFilter, blockNum, blockNum).catch(() => [])
+
+      const newTxs: FeedTx[] = []
+      for (const log of logs) {
+        if (seenHashes.current.has(log.transactionHash)) continue
+        seenHashes.current.add(log.transactionHash)
+        const parsed = usdcContract.interface.parseLog({ topics: [...log.topics], data: log.data })
+        if (!parsed) continue
+        const amount = parseFloat(ethers.formatUnits(parsed.args[2], 6))
+        if (amount <= 0) continue
+        newTxs.push({
+          hash: log.transactionHash,
+          from: shortAddr(parsed.args[0]),
+          to: shortAddr(parsed.args[1]),
+          amount: amount.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }),
+          blockNumber: blockNum,
+          ageSeconds: 0,
+          token: 'USDC',
+        })
+      }
+
+      if (newTxs.length > 0) {
+        setFeed(prev => [...newTxs, ...prev].slice(0, 8))
+      }
+    } catch (e) {
+      console.error('livefeed block error:', e)
+    }
   }, [])
 
-  // Add new tx every 4.5s
+  // Seed with last 5 blocks on mount
   useEffect(() => {
-    const id = setInterval(async () => {
+    let cancelled = false
+    async function seed() {
       try {
-        const block = await rpc.getBlockNumber()
-        setBlockNumber(block)
-        const c = CORRIDORS[Math.floor(Math.random() * CORRIDORS.length)]
-        const newTx: FeedTx = {
-          id: `TX-${++txCounter}`,
-          from: c.from, to: c.to,
-          amount: randAmount(c.min, c.max),
-          flagFrom: c.ff, flagTo: c.ft,
-          age: 'just now',
-          blockNumber: block,
+        const latest = await rpc.getBlockNumber()
+        setBlockNumber(latest)
+        if (cancelled) return
+        // Fetch last 3 blocks to seed feed
+        for (let b = latest; b > latest - 3; b--) {
+          if (cancelled) return
+          await fetchBlockEvents(b)
         }
-        setFeed(prev => [newTx, ...prev].slice(0, 6))
-      } catch {}
-    }, 4500)
+      } catch { }
+    }
+    seed()
+    return () => { cancelled = true }
+  }, [fetchBlockEvents])
+
+  // Poll for new blocks every 2s — more reliable than ethers HTTP provider event emission
+  // which can silently stop after RPC timeouts.
+  useEffect(() => {
+    let lastBlock = 0
+    const poll = async () => {
+      try {
+        const current = await rpc.getBlockNumber()
+        if (current !== lastBlock) {
+          lastBlock = current
+          setBlockNumber(current)
+          fetchBlockEvents(current)
+        }
+      } catch {
+        // RPC hiccup — will retry next interval
+      }
+    }
+    poll() // immediate first call
+    const id = setInterval(poll, 2_000)
+    return () => clearInterval(id)
+  }, [fetchBlockEvents])
+
+  // Age ticker — update ageSeconds every second
+  useEffect(() => {
+    const id = setInterval(() => {
+      setFeed(prev => prev.map(tx => ({
+        ...tx,
+        ageSeconds: Math.floor(
+          (Date.now() - (blockTimes.current.get(tx.blockNumber) ?? Date.now())) / 1000
+        ),
+      })))
+    }, 1000)
     return () => clearInterval(id)
   }, [])
 
